@@ -6,143 +6,606 @@
 <title>Cat Chase</title>
 <style>
   html, body { margin: 0; height: 100%; overflow: hidden; background: #1d2b1f; font-family: system-ui, sans-serif; }
-  #hud { position: fixed; top: 12px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 20px; color: #fff; font-size: 26px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,.6); pointer-events: none; }
-  #overlay { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; color: #fff; text-align: center; background: rgba(0,0,0,.45); }
-  #overlay h1 { font-size: 48px; margin: 0 0 12px; }
-  #overlay p { font-size: 20px; margin: 6px; }
+  #hud { position: fixed; top: 12px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 20px; color: #fff; font-size: 26px; font-weight: 700; text-shadow: 0 2px 4px rgba(0,0,0,.7); pointer-events: none; }
+  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 16px; box-sizing: border-box; }
+  .panel { background: rgba(20, 24, 32, .82); color: #fff; border-radius: 16px; padding: 24px 28px; text-align: center; max-width: 640px; width: 100%; box-shadow: 0 10px 40px rgba(0,0,0,.4); }
+  .panel h1 { font-size: 44px; margin: 0 0 8px; }
+  .panel h2 { font-size: 18px; margin: 18px 0 10px; color: #ffd27a; text-transform: uppercase; letter-spacing: .08em; }
+  .panel p { font-size: 17px; margin: 8px 0; }
+  .choices { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+  .choice { background: #2c3444; color: #fff; border: 3px solid transparent; border-radius: 12px; padding: 10px 14px; font-size: 16px; cursor: pointer; min-width: 120px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .choice:hover { background: #38425a; }
+  .choice.selected { border-color: #ffd27a; background: #404b66; }
+  .swatch { display: flex; gap: 4px; }
+  .swatch span { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(255,255,255,.4); }
+  .btn { margin-top: 20px; background: #ffb340; color: #222; border: 0; border-radius: 10px; padding: 12px 30px; font-size: 20px; font-weight: 700; cursor: pointer; }
+  .btn.secondary { background: #2c3444; color: #fff; margin-left: 8px; }
+  .btn:hover { filter: brightness(1.1); }
+  .hint { color: #c9cfdb; font-size: 15px !important; }
   .hidden { display: none !important; }
 </style>
 </head>
 <body>
-<div id="hud"><span id="score">Score: 0</span><span id="time">Time: 60</span></div>
-<div id="overlay">
-  <h1 id="title">Cat Chase</h1>
-  <p id="msg">Catch as many mice as you can in 60 seconds.</p>
-  <p>WASD / Arrow keys to move &middot; Space to jump</p>
-  <p><b>Press Space to start</b></p>
+<div id="hud" class="hidden"><span id="score">Score: 0</span><span id="time">Time: 60</span></div>
+
+<div id="menu" class="screen">
+  <div class="panel">
+    <h1>Cat Chase</h1>
+    <p>Catch as many mice as you can in 60 seconds.</p>
+    <h2>Choose your cat</h2>
+    <div class="choices" id="catChoices"></div>
+    <h2>Choose a level</h2>
+    <div class="choices" id="levelChoices"></div>
+    <button class="btn" id="startBtn">Start</button>
+    <p class="hint">WASD / Arrow keys to move (press two for diagonals) &middot; Space to jump</p>
+    <p class="hint">Hop onto obstacles to cut across and reach mice faster.</p>
+  </div>
+</div>
+
+<div id="over" class="screen hidden">
+  <div class="panel">
+    <h1>Time's up!</h1>
+    <p id="overMsg"></p>
+    <button class="btn" id="againBtn">Play again</button><button class="btn secondary" id="menuBtn">Main menu</button>
+    <p class="hint">Press Space to play again</p>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
+// ================= settings =================
 const ROUND_TIME = 60;
-const ARENA = 14;          // half-size of the play field
+const ARENA = 14;              // half-size of the play field
 const MOUSE_COUNT = 4;
-const CAT_MAX_SPEED = 9, CAT_ACCEL = 30, CAT_FRICTION = 8;
-const JUMP_SPEED = 9, GRAVITY = 25;
+const CAT_MAX_SPEED = 9, CAT_ACCEL = 32, CAT_FRICTION = 8;
+const JUMP_SPEED = 9.5, GRAVITY = 25;   // jump peak ~1.8 units: clears every obstacle
+const CAT_RADIUS = 0.5, MOUSE_RADIUS = 0.35;
 const CATCH_DIST = 1.3;
 
-// ---------- scene ----------
+const CATS = {
+  ginger:  { name: 'Ginger',  fur: 0xf08a24, accent: 0xb85a12, eye: 0x3a9a3a, nose: 0xe86a7a },
+  shadow:  { name: 'Shadow',  fur: 0x2a2a30, accent: 0x15151a, eye: 0xf5d020, nose: 0x553333 },
+  siamese: { name: 'Siamese', fur: 0xf3e6cc, accent: 0x5a3d2b, eye: 0x3a7fd8, nose: 0x3a2a20 },
+};
+const LEVELS = {
+  beach:  { name: 'Beach',        swatch: ['#e8d39a', '#3a9ad9', '#58a84a'] },
+  garden: { name: 'Garden',       swatch: ['#6fb84f', '#e85a8a', '#8a5a34'] },
+  city:   { name: 'City Streets', swatch: ['#55585e', '#d8c24a', '#8a96a8'] },
+};
+
+// ================= renderer / camera =================
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x9fd3f0);
-
-const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 200);
+const camera = new THREE.PerspectiveCamera(50, 1, 0.1, 400);
 function fitCamera() {
   const w = window.innerWidth, h = window.innerHeight;
   renderer.setSize(w, h);
   camera.aspect = w / h;
-  // pull back further on narrow screens so the whole arena stays visible
   const dist = 30 * Math.max(1, 1.3 / camera.aspect);
-  camera.position.set(0, dist * 0.95, dist * 0.6);
-  camera.lookAt(0, 0, 1);
+  camera.position.set(0, dist * 0.9, dist * 0.68);
+  camera.lookAt(0, 0, 1.5);
   camera.updateProjectionMatrix();
 }
 window.addEventListener('resize', fitCamera);
 fitCamera();
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x445533, 0.7));
+const hemi = new THREE.HemisphereLight(0xffffff, 0x445533, 0.7);
+scene.add(hemi);
 const sun = new THREE.DirectionalLight(0xffffff, 0.8);
 sun.position.set(10, 25, 10);
 sun.castShadow = true;
-sun.shadow.camera.left = sun.shadow.camera.bottom = -20;
-sun.shadow.camera.right = sun.shadow.camera.top = 20;
-sun.shadow.mapSize.set(1024, 1024);
+Object.assign(sun.shadow.camera, { left: -22, right: 22, top: 22, bottom: -22 });
+sun.shadow.mapSize.set(2048, 2048);
 scene.add(sun);
 
-// floor + walls
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2),
-  new THREE.MeshLambertMaterial({ color: 0x7cbf5a }));
-floor.rotation.x = -Math.PI / 2;
-floor.receiveShadow = true;
-scene.add(floor);
-
-const wallMat = new THREE.MeshLambertMaterial({ color: 0xb07a4a });
-[[0, -ARENA, ARENA * 2 + 1, 1], [0, ARENA, ARENA * 2 + 1, 1],
- [-ARENA, 0, 1, ARENA * 2 + 1], [ARENA, 0, 1, ARENA * 2 + 1]].forEach(([x, z, w, d]) => {
-  const wall = new THREE.Mesh(new THREE.BoxGeometry(w, 1, d), wallMat);
-  wall.position.set(x, 0.5, z);
-  wall.castShadow = wall.receiveShadow = true;
-  scene.add(wall);
-});
-
-// ---------- cat ----------
-function makeCat() {
-  const g = new THREE.Group();
-  const fur = new THREE.MeshLambertMaterial({ color: 0xf08a24 });
-  const dark = new THREE.MeshLambertMaterial({ color: 0x222222 });
-  const body = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.7, 1.6), fur);
-  body.position.y = 0.75;
-  const head = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 0.7), fur);
-  head.position.set(0, 1.25, 0.95);
-  const earGeo = new THREE.ConeGeometry(0.17, 0.35, 4);
-  const earL = new THREE.Mesh(earGeo, fur); earL.position.set(-0.25, 1.75, 0.95);
-  const earR = earL.clone(); earR.position.x = 0.25;
-  const eyeGeo = new THREE.BoxGeometry(0.12, 0.12, 0.05);
-  const eyeL = new THREE.Mesh(eyeGeo, dark); eyeL.position.set(-0.18, 1.32, 1.31);
-  const eyeR = eyeL.clone(); eyeR.position.x = 0.18;
-  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.1), fur);
-  tail.position.set(0, 1.2, -0.95); tail.rotation.x = -0.6;
-  const legGeo = new THREE.BoxGeometry(0.22, 0.45, 0.22);
-  [[-0.3, 0.6], [0.3, 0.6], [-0.3, -0.6], [0.3, -0.6]].forEach(([x, z]) => {
-    const leg = new THREE.Mesh(legGeo, fur); leg.position.set(x, 0.22, z); g.add(leg);
-  });
-  g.add(body, head, earL, earR, eyeL, eyeR, tail);
-  g.traverse(m => { if (m.isMesh) m.castShadow = true; });
-  return g;
+// ================= helpers =================
+const mat = c => new THREE.MeshLambertMaterial({ color: c });
+function box(w, h, d, color, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(color));
+  m.position.set(x, y, z);
+  m.castShadow = m.receiveShadow = true;
+  return m;
 }
-const cat = makeCat();
-scene.add(cat);
-const catState = { vx: 0, vz: 0, vy: 0, y: 0 };
+function cyl(rt, rb, h, color, x = 0, y = 0, z = 0, seg = 12) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt, rb, h, seg), mat(color));
+  m.position.set(x, y, z);
+  m.castShadow = m.receiveShadow = true;
+  return m;
+}
+function sphere(r, color, x = 0, y = 0, z = 0) {
+  const m = new THREE.Mesh(new THREE.SphereGeometry(r, 12, 10), mat(color));
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  return m;
+}
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
 
-// ---------- mice ----------
+// ================= cat model =================
+function makeCat(def) {
+  const root = new THREE.Group();          // sits on the floor, turns to face movement
+  const body = new THREE.Group();          // bobs while running
+  root.add(body);
+  const fur = def.fur, acc = def.accent;
+
+  body.add(box(0.9, 0.7, 1.6, fur, 0, 0.8, 0));
+  // stripes
+  for (const z of [-0.45, 0, 0.45]) body.add(box(0.94, 0.12, 0.14, acc, 0, 1.12, z));
+
+  const head = new THREE.Group();
+  head.position.set(0, 1.25, 0.95);
+  head.add(box(0.8, 0.7, 0.7, fur));
+  head.add(box(0.42, 0.26, 0.15, acc, 0, -0.14, 0.38));          // muzzle
+  head.add(box(0.12, 0.08, 0.05, def.nose, 0, -0.04, 0.47));     // nose
+  for (const s of [-1, 1]) {
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.17, 0.38, 4), mat(acc));
+    ear.position.set(0.25 * s, 0.5, 0); ear.rotation.y = Math.PI / 4;
+    ear.castShadow = true;
+    head.add(ear);
+    head.add(box(0.13, 0.13, 0.05, def.eye, 0.18 * s, 0.08, 0.36));
+    head.add(box(0.05, 0.11, 0.06, 0x000000, 0.18 * s, 0.08, 0.37));
+  }
+  body.add(head);
+
+  const tail = new THREE.Group();
+  tail.position.set(0, 1.0, -0.8);
+  const tailMesh = cyl(0.07, 0.1, 1.1, acc, 0, 0.55, 0);
+  tail.add(tailMesh);
+  body.add(tail);
+
+  const legs = [];
+  for (const [x, z, phase] of [[-0.3, 0.6, 0], [0.3, 0.6, Math.PI], [-0.3, -0.6, Math.PI], [0.3, -0.6, 0]]) {
+    const hip = new THREE.Group();
+    hip.position.set(x, 0.5, z);
+    hip.add(box(0.22, 0.5, 0.22, fur, 0, -0.25, 0));
+    hip.add(box(0.24, 0.1, 0.28, acc, 0, -0.47, 0.03));          // paw
+    body.add(hip);
+    legs.push({ hip, phase, front: z > 0 });
+  }
+  return { root, body, head, tail, legs, step: 0, t: 0 };
+}
+
+// animate legs / tail / body depending on what the cat is doing
+function animateCat(c, dt, speed, airborne) {
+  c.t += dt;
+  const run = clamp(speed / CAT_MAX_SPEED, 0, 1);
+  c.step += dt * (4 + speed * 1.6);
+  const ease = Math.min(1, 14 * dt);
+  for (const l of c.legs) {
+    let target;
+    if (airborne) target = l.front ? -0.9 : 0.9;                     // stretched leap pose
+    else target = Math.sin(c.step + l.phase) * 0.8 * run;            // trot
+    l.hip.rotation.x += (target - l.hip.rotation.x) * ease;
+  }
+  c.body.position.y = airborne ? 0 : Math.abs(Math.sin(c.step)) * 0.08 * run;
+  const pitch = airborne ? -0.12 : 0;
+  c.body.rotation.x += (pitch - c.body.rotation.x) * ease;
+  // tail: lazy sway when idle, streams out behind when running/jumping
+  const tailUp = airborne ? -1.6 : -0.5 - run * 0.8;
+  c.tail.rotation.x += (tailUp - c.tail.rotation.x) * ease;
+  c.tail.rotation.z = Math.sin(c.t * (2 + run * 6)) * (0.35 - run * 0.15);
+  // head bobs slightly
+  c.head.rotation.x = Math.sin(c.step * 2) * 0.05 * run + Math.sin(c.t * 1.5) * 0.03;
+}
+
+// ================= mouse model =================
 function makeMouse() {
   const g = new THREE.Group();
-  const grey = new THREE.MeshLambertMaterial({ color: 0x9a9a9a });
-  const pink = new THREE.MeshLambertMaterial({ color: 0xf2a0b0 });
-  const body = new THREE.Mesh(new THREE.SphereGeometry(0.35, 12, 10), grey);
-  body.scale.set(1, 0.8, 1.4); body.position.y = 0.3;
-  const earGeo = new THREE.SphereGeometry(0.13, 8, 6);
-  const earL = new THREE.Mesh(earGeo, pink); earL.position.set(-0.17, 0.6, 0.3);
-  const earR = earL.clone(); earR.position.x = 0.17;
-  const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.8), pink);
-  tail.rotation.x = Math.PI / 2; tail.position.set(0, 0.25, -0.8);
-  g.add(body, earL, earR, tail);
-  g.traverse(m => { if (m.isMesh) m.castShadow = true; });
+  const b = sphere(0.35, 0x9a9a9a, 0, 0.3, 0); b.scale.set(1, 0.8, 1.4); g.add(b);
+  for (const s of [-1, 1]) {
+    g.add(sphere(0.13, 0xf2a0b0, 0.17 * s, 0.6, 0.3));
+    g.add(sphere(0.04, 0x111111, 0.12 * s, 0.4, 0.52));
+  }
+  g.add(sphere(0.05, 0xf2a0b0, 0, 0.3, 0.6));
+  const tail = cyl(0.03, 0.03, 0.8, 0xf2a0b0, 0, 0.25, -0.8);
+  tail.rotation.x = Math.PI / 2;
+  g.add(tail);
   return g;
 }
+
+// ================= levels =================
+// Obstacles are boxes {x, z, w, d, h}. Every obstacle is 0.6-1.1 tall,
+// low enough that the cat can jump on top (jump peak ~1.8).
+let levelGroup = null;
+let obstacles = [];
+let animated = [];   // things in the backdrop that move (waves, etc.)
+
+function addObstacle(o, mesh) {
+  obstacles.push(o);
+  levelGroup.add(mesh);
+}
+
+function makeCanvasTexture(w, h, draw) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.anisotropy = 4;
+  return t;
+}
+
+function baseLevel(opts) {
+  scene.background = new THREE.Color(opts.sky);
+  scene.fog = new THREE.Fog(opts.sky, 60, 140);
+  hemi.color.set(opts.hemiSky); hemi.groundColor.set(opts.hemiGround);
+  // big outer ground
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(300, 300), mat(opts.outer));
+  outer.rotation.x = -Math.PI / 2; outer.position.y = -0.02; outer.receiveShadow = true;
+  levelGroup.add(outer);
+  // arena floor
+  const floorMat = opts.floorTex
+    ? new THREE.MeshLambertMaterial({ map: opts.floorTex })
+    : mat(opts.floor);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(ARENA * 2, ARENA * 2), floorMat);
+  floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true;
+  levelGroup.add(floor);
+  // low border walls
+  for (const [x, z, w, d] of [[0, -ARENA - 0.5, ARENA * 2 + 2, 1], [0, ARENA + 0.5, ARENA * 2 + 2, 1],
+                              [-ARENA - 0.5, 0, 1, ARENA * 2], [ARENA + 0.5, 0, 1, ARENA * 2]]) {
+    levelGroup.add(box(w, opts.wallH, d, opts.wall, x, opts.wallH / 2, z));
+  }
+}
+
+function palmTree(x, z, s = 1) {
+  const g = new THREE.Group();
+  let y = 0, lean = rand(-0.15, 0.15);
+  for (let i = 0; i < 6; i++) {
+    const seg = cyl(0.28 - i * 0.02, 0.32 - i * 0.02, 1.1, 0x8a6a3c, lean * i * 0.6, y + 0.55, 0, 8);
+    g.add(seg); y += 1.05;
+  }
+  const top = new THREE.Vector3(lean * 3.6, y, 0);
+  for (let i = 0; i < 7; i++) {
+    const leaf = box(0.5, 0.08, 3, 0x2f8a3a);
+    const a = (i / 7) * Math.PI * 2;
+    leaf.position.set(top.x + Math.sin(a) * 1.3, top.y - 0.3, Math.cos(a) * 1.3);
+    leaf.rotation.y = a; leaf.rotation.x = 0.35;
+    g.add(leaf);
+  }
+  g.add(sphere(0.25, 0x6a4a2a, top.x + 0.2, top.y - 0.2, 0.2));
+  g.add(sphere(0.25, 0x6a4a2a, top.x - 0.2, top.y - 0.25, -0.1));
+  g.position.set(x, 0, z); g.scale.setScalar(s);
+  return g;
+}
+
+function tree(x, z, s = 1) {
+  const g = new THREE.Group();
+  g.add(cyl(0.35, 0.45, 2.4, 0x7a5230, 0, 1.2, 0, 8));
+  g.add(sphere(1.8, 0x3f8f3a, 0, 3.6, 0));
+  g.add(sphere(1.3, 0x4fa44a, 0.9, 3.0, 0.5));
+  g.add(sphere(1.2, 0x37803a, -0.9, 3.2, -0.3));
+  g.position.set(x, 0, z); g.scale.setScalar(s);
+  return g;
+}
+
+function flower(x, z, color) {
+  const g = new THREE.Group();
+  g.add(cyl(0.03, 0.03, 0.4, 0x3a8a3a, 0, 0.2, 0, 5));
+  g.add(sphere(0.12, color, 0, 0.42, 0));
+  g.add(sphere(0.05, 0xffe14a, 0, 0.47, 0.08));
+  g.position.set(x, 0, z);
+  return g;
+}
+
+const LEVEL_BUILDERS = {
+  beach() {
+    baseLevel({ sky: 0x8fd4f5, hemiSky: 0xffffff, hemiGround: 0xd8c48a, outer: 0xe3cc8e,
+                floor: 0xd9bf82, wall: 0xa9845a, wallH: 0.6 });
+    // ocean along the back with gentle waves
+    const sea = new THREE.Mesh(new THREE.PlaneGeometry(300, 120),
+      new THREE.MeshLambertMaterial({ color: 0x2f8fd0, transparent: true, opacity: 0.92 }));
+    sea.rotation.x = -Math.PI / 2; sea.position.set(0, 0.05, -80);
+    levelGroup.add(sea);
+    for (let i = 0; i < 4; i++) {
+      const foam = box(300, 0.05, 0.6, 0xffffff, 0, 0.08, -21 - i * 4);
+      foam.castShadow = false;
+      levelGroup.add(foam);
+      animated.push(t => { foam.position.z = -21 - i * 4 + Math.sin(t * 0.8 + i) * 1.2; });
+    }
+    animated.push(t => { sea.position.y = 0.05 + Math.sin(t * 0.6) * 0.04; });
+    // sun + sailboat
+    const s = new THREE.Mesh(new THREE.SphereGeometry(5, 20, 16), new THREE.MeshBasicMaterial({ color: 0xfff1a8, fog: false }));
+    s.position.set(-40, 26, -120); levelGroup.add(s);
+    const boat = new THREE.Group();
+    boat.add(box(4, 0.8, 1.4, 0xffffff, 0, 0.4, 0));
+    const sail = new THREE.Mesh(new THREE.ConeGeometry(1.4, 4, 3), mat(0xe8534a));
+    sail.position.set(0, 2.8, 0); boat.add(sail);
+    boat.position.set(18, 0, -55); levelGroup.add(boat);
+    animated.push(t => { boat.position.x = 18 + Math.sin(t * 0.1) * 12; boat.rotation.z = Math.sin(t * 1.2) * 0.05; });
+    // palms down both sides
+    for (const z of [-12, -4, 4, 12]) {
+      levelGroup.add(palmTree(-18 - rand(0, 3), z + rand(-1, 1), rand(0.9, 1.2)));
+      levelGroup.add(palmTree(18 + rand(0, 3), z + rand(-1, 1), rand(0.9, 1.2)));
+    }
+    // beach umbrella + towels outside the arena
+    const umb = new THREE.Group();
+    umb.add(cyl(0.06, 0.06, 3, 0xffffff, 0, 1.5, 0, 6));
+    umb.add(new THREE.Mesh(new THREE.ConeGeometry(2, 0.8, 8), mat(0xff6f61)));
+    umb.children[1].position.y = 3;
+    umb.position.set(-17, 0, -17); levelGroup.add(umb);
+    levelGroup.add(box(1.4, 0.03, 2.4, 0x4ab0e8, 17, 0.02, -17));
+
+    // obstacles: sandcastles, coolers, driftwood logs
+    const castle = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(1.8, 0.7, 1.8, 0xd9bf7a, 0, 0.35, 0));
+      for (const [cx, cz] of [[-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7]])
+        g.add(box(0.3, 0.2, 0.3, 0xcfb26c, cx, 0.8, cz));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 1.8, d: 1.8, h: 0.75 }, g);
+    };
+    const cooler = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(1.4, 0.75, 1.0, 0x2a7fd4, 0, 0.375, 0));
+      g.add(box(1.45, 0.12, 1.05, 0xffffff, 0, 0.8, 0));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 1.4, d: 1.0, h: 0.86 }, g);
+    };
+    const log = (x, z, along) => {
+      const m = cyl(0.4, 0.45, 4, 0x9c7b5a, x, 0.42, z, 10);
+      m.rotation.z = Math.PI / 2;
+      if (along) { m.rotation.z = 0; m.rotation.x = Math.PI / 2; }
+      addObstacle(along ? { x, z, w: 0.9, d: 4, h: 0.85 } : { x, z, w: 4, d: 0.9, h: 0.85 }, m);
+    };
+    castle(-7, -6); castle(7, 6); castle(-8, 8);
+    cooler(6, -8); cooler(-3, 3);
+    log(0, -10, false); log(10, 0, true); log(-11, -1, true); log(3, 9, false);
+  },
+
+  garden() {
+    const grassTex = makeCanvasTexture(256, 256, (g, w, h) => {
+      for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+        g.fillStyle = (i + j) % 2 ? '#6fb84f' : '#78c257';
+        g.fillRect(i * 32, j * 32, 32, 32);
+      }
+    });
+    baseLevel({ sky: 0xa6dcff, hemiSky: 0xffffff, hemiGround: 0x4a7a3a, outer: 0x5aa046,
+                floorTex: grassTex, wall: 0xf5f5f0, wallH: 0.9 });
+    // fence pickets on top of the walls
+    for (let i = -ARENA; i <= ARENA; i += 1.2) {
+      for (const [x, z] of [[i, -ARENA - 0.5], [i, ARENA + 0.5], [-ARENA - 0.5, i], [ARENA + 0.5, i]]) {
+        const p = box(0.25, 0.5, 0.25, 0xffffff, x, 1.15, z);
+        p.castShadow = false;
+        levelGroup.add(p);
+      }
+    }
+    // house in the back
+    const house = new THREE.Group();
+    house.add(box(14, 7, 8, 0xe9d8b8, 0, 3.5, 0));
+    const roof = new THREE.Mesh(new THREE.ConeGeometry(10.5, 4, 4), mat(0xb24a3a));
+    roof.position.y = 9; roof.rotation.y = Math.PI / 4; roof.scale.z = 0.62; roof.castShadow = true;
+    house.add(roof);
+    house.add(box(1.8, 3, 0.2, 0x7a4a2a, 0, 1.5, 4.05));
+    for (const x of [-4.5, 4.5]) for (const y of [2.5, 5.3]) house.add(box(1.8, 1.4, 0.2, 0x9fd0f0, x, y, 4.05));
+    house.position.set(0, 0, -30);
+    levelGroup.add(house);
+    // trees & flower beds around
+    for (const [x, z, s] of [[-20, -18, 1.3], [-22, -4, 1.1], [-19, 9, 1.2], [21, -16, 1.2], [22, -2, 1.0],
+                             [20, 11, 1.3], [-12, -24, 1.0], [13, -24, 1.1]])
+      levelGroup.add(tree(x, z, s));
+    const colors = [0xe85a8a, 0xffd23f, 0xb36ae8, 0xff8040, 0xffffff];
+    for (let i = 0; i < 70; i++) {
+      const side = Math.random() < 0.5 ? -1 : 1;
+      levelGroup.add(flower(side * rand(15.5, 18), rand(-15, 15), colors[i % colors.length]));
+    }
+    // butterflies
+    for (let i = 0; i < 3; i++) {
+      const b = new THREE.Group();
+      const wingL = box(0.3, 0.02, 0.25, 0xffb0e0, -0.15, 0, 0), wingR = box(0.3, 0.02, 0.25, 0xffb0e0, 0.15, 0, 0);
+      b.add(wingL, wingR); levelGroup.add(b);
+      const ox = rand(-10, 10), oz = rand(-10, 10), ph = rand(0, 6);
+      animated.push(t => {
+        b.position.set(ox + Math.sin(t * 0.4 + ph) * 6, 3 + Math.sin(t * 2 + ph) * 0.4, oz + Math.cos(t * 0.3 + ph) * 5);
+        wingL.rotation.z = Math.sin(t * 18) * 0.8; wingR.rotation.z = -wingL.rotation.z;
+      });
+    }
+
+    // obstacles: hedges, planters with flowers, stone bench, flower pots
+    const hedge = (x, z, w, d) => addObstacle({ x, z, w, d, h: 1.0 }, box(w, 1.0, d, 0x2f7a2f, x, 0.5, z));
+    const planter = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(2.2, 0.7, 1.2, 0x8a5a34, 0, 0.35, 0));
+      g.add(box(2.0, 0.05, 1.0, 0x4a3020, 0, 0.71, 0));
+      for (let i = 0; i < 5; i++) g.add(sphere(0.13, colors[i], -0.8 + i * 0.4, 0.78, rand(-0.25, 0.25)));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 2.2, d: 1.2, h: 0.72 }, g);
+    };
+    const bench = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(2.6, 0.18, 0.9, 0xb8b8b0, 0, 0.62, 0));
+      g.add(box(0.4, 0.55, 0.8, 0x9a9a92, -1, 0.27, 0));
+      g.add(box(0.4, 0.55, 0.8, 0x9a9a92, 1, 0.27, 0));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 2.6, d: 0.9, h: 0.71 }, g);
+    };
+    const pot = (x, z) => {
+      const g = new THREE.Group();
+      g.add(cyl(0.6, 0.45, 0.8, 0xc8643a, 0, 0.4, 0));
+      g.add(sphere(0.45, 0x3f9a3a, 0, 0.85, 0));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 1.2, d: 1.2, h: 0.9 }, g);
+    };
+    hedge(-6, -5, 5, 1.2); hedge(6, 5, 5, 1.2); hedge(9, -7, 1.2, 4); hedge(-9, 7, 1.2, 4);
+    planter(0, -9); planter(0, 9);
+    bench(-9, -10); bench(9, 10);
+    pot(-4, 3); pot(4, -3); pot(11, 2); pot(-11, -2);
+  },
+
+  city() {
+    const roadTex = makeCanvasTexture(512, 512, (g, w, h) => {
+      g.fillStyle = '#55585e'; g.fillRect(0, 0, w, h);
+      for (let i = 0; i < 1500; i++) {          // speckle
+        g.fillStyle = Math.random() < 0.5 ? '#4d5056' : '#5e6168';
+        g.fillRect(Math.random() * w, Math.random() * h, 3, 3);
+      }
+      g.fillStyle = '#e8d24a';                    // center line
+      for (let y = 0; y < h; y += 48) g.fillRect(w / 2 - 6, y, 12, 28);
+      g.fillStyle = '#eeeeee';                    // crosswalk
+      for (let x = 40; x < w - 40; x += 36) g.fillRect(x, h - 70, 20, 50);
+    });
+    baseLevel({ sky: 0xc4d4e6, hemiSky: 0xf0f4ff, hemiGround: 0x555560, outer: 0x8a8a8a,
+                floorTex: roadTex, wall: 0xb5b5b0, wallH: 0.4 });
+    // buildings around three sides
+    const winTex = makeCanvasTexture(64, 128, (g, w, h) => {
+      g.fillStyle = '#ffffff'; g.fillRect(0, 0, w, h);
+      for (let y = 6; y < h; y += 16) for (let x = 6; x < w; x += 16) {
+        g.fillStyle = Math.random() < 0.3 ? '#fff2a8' : '#5d7088';
+        g.fillRect(x, y, 9, 10);
+      }
+    });
+    const bColors = [0xc0785a, 0x8f9fb0, 0xd6c6a6, 0x7a8a7a, 0xa66a6a, 0x9a8ab8];
+    const building = (x, z, w, d, h) => {
+      const tex = winTex.clone(); tex.needsUpdate = true;
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+      tex.repeat.set(Math.max(1, Math.round(w / 3)), Math.max(1, Math.round(h / 6)));
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshLambertMaterial({ color: bColors[Math.floor(Math.random() * bColors.length)], map: tex }));
+      m.position.set(x, h / 2, z); m.castShadow = m.receiveShadow = true;
+      levelGroup.add(m);
+      levelGroup.add(box(w + 0.4, 0.5, d + 0.4, 0x555555, x, h + 0.25, z));
+    };
+    for (let x = -34; x <= 34; x += 8.5) building(x, -26 - rand(0, 4), 8, 8, rand(10, 26));
+    for (let z = -16; z <= 14; z += 8) {
+      building(-24 - rand(0, 2), z, 8, 7.5, rand(8, 18));
+      building(24 + rand(0, 2), z, 8, 7.5, rand(8, 18));
+    }
+    // sidewalk & street lamps
+    for (const [x, z, w, d] of [[0, -18, 40, 5], [-17.5, 0, 5, 32], [17.5, 0, 5, 32]])
+      levelGroup.add(box(w, 0.15, d, 0xa8a8a2, x, 0.07, z));
+    for (const [x, z] of [[-16.5, -12], [-16.5, 0], [-16.5, 12], [16.5, -12], [16.5, 0], [16.5, 12], [-8, -16.5], [8, -16.5]]) {
+      levelGroup.add(cyl(0.1, 0.12, 5, 0x333840, x, 2.5, z, 8));
+      levelGroup.add(sphere(0.35, 0xfff3c0, x, 5.1, z));
+    }
+    // traffic light
+    levelGroup.add(cyl(0.12, 0.12, 4.5, 0x333840, -16, 2.25, -16, 8));
+    levelGroup.add(box(0.5, 1.3, 0.5, 0x222222, -16, 4.6, -16));
+    const lights = [0xff3030, 0xffc020, 0x30d040].map((c, i) => {
+      const l = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), new THREE.MeshBasicMaterial({ color: 0x333333 }));
+      l.position.set(-16, 5.0 - i * 0.4, -15.73); levelGroup.add(l); return [l, c];
+    });
+    animated.push(t => {
+      const on = Math.floor(t / 3) % 3;
+      lights.forEach(([l, c], i) => l.material.color.set(i === on ? c : 0x333333));
+    });
+    // a car driving along the back street
+    const car = new THREE.Group();
+    car.add(box(3.6, 0.9, 1.7, 0xd83a3a, 0, 0.75, 0));
+    car.add(box(2, 0.7, 1.5, 0x9fd0f0, -0.2, 1.5, 0));
+    for (const [x, z] of [[-1.2, 0.85], [1.2, 0.85], [-1.2, -0.85], [1.2, -0.85]]) {
+      const w = cyl(0.38, 0.38, 0.3, 0x111111, x, 0.38, z, 10); w.rotation.x = Math.PI / 2; car.add(w);
+    }
+    levelGroup.add(car);
+    animated.push(t => { car.position.set(((t * 8) % 90) - 45, 0, -21.5); });
+
+    // obstacles: dumpsters, crates, road barriers, newspaper boxes
+    const dumpster = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(2.2, 1.0, 1.3, 0x2f6a3a, 0, 0.5, 0));
+      g.add(box(2.3, 0.08, 1.35, 0x1f4a2a, 0, 1.04, 0));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 2.3, d: 1.35, h: 1.08 }, g);
+    };
+    const crate = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(1.1, 0.9, 1.1, 0xb98a50, 0, 0.45, 0));
+      g.add(box(1.12, 0.1, 1.12, 0x8a6030, 0, 0.75, 0));
+      g.add(box(1.12, 0.1, 1.12, 0x8a6030, 0, 0.15, 0));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 1.1, d: 1.1, h: 0.9 }, g);
+    };
+    const barrier = (x, z, along) => {
+      const g = new THREE.Group();
+      for (let i = 0; i < 4; i++) g.add(box(0.75, 0.7, 0.6, i % 2 ? 0xffffff : 0xe8402a, -1.125 + i * 0.75, 0.35, 0));
+      g.position.set(x, 0, z);
+      if (along) g.rotation.y = Math.PI / 2;
+      addObstacle(along ? { x, z, w: 0.6, d: 3, h: 0.7 } : { x, z, w: 3, d: 0.6, h: 0.7 }, g);
+    };
+    const newsBox = (x, z) => {
+      const g = new THREE.Group();
+      g.add(box(0.8, 1.0, 0.7, 0x2a5ad0, 0, 0.5, 0));
+      g.add(box(0.6, 0.3, 0.05, 0xdddddd, 0, 0.7, 0.36));
+      g.position.set(x, 0, z);
+      addObstacle({ x, z, w: 0.8, d: 0.7, h: 1.0 }, g);
+    };
+    dumpster(-8, -8); dumpster(8, 8);
+    crate(6, -6); crate(7.1, -6); crate(-6, 6); crate(-6, 7.1);
+    barrier(0, -5, false); barrier(0, 5, false); barrier(-11, 1, true); barrier(11, -1, true);
+    newsBox(-3, -11); newsBox(4, 11); newsBox(11, -10);
+  },
+};
+
+function loadLevel(key) {
+  if (levelGroup) {
+    scene.remove(levelGroup);
+    levelGroup.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+  }
+  levelGroup = new THREE.Group();
+  obstacles = []; animated = [];
+  scene.add(levelGroup);
+  LEVEL_BUILDERS[key]();
+}
+
+// ================= collision helpers =================
+// does a circle at (x,z) with radius r overlap obstacle o (top-down)?
+function overlaps(o, x, z, r) {
+  const cx = clamp(x, o.x - o.w / 2, o.x + o.w / 2);
+  const cz = clamp(z, o.z - o.d / 2, o.z + o.d / 2);
+  return (x - cx) ** 2 + (z - cz) ** 2 < r * r;
+}
+// would the cat at (x,z) standing at height y bump into the side of something?
+function catBlocked(x, z, y) {
+  for (const o of obstacles) if (y < o.h - 0.05 && overlaps(o, x, z, CAT_RADIUS)) return true;
+  return false;
+}
+// highest surface under the cat
+function groundHeight(x, z, y) {
+  let g = 0;
+  for (const o of obstacles) if (o.h <= y + 0.05 && overlaps(o, x, z, CAT_RADIUS)) g = Math.max(g, o.h);
+  return g;
+}
+function mouseBlocked(x, z) {
+  for (const o of obstacles) if (overlaps(o, x, z, MOUSE_RADIUS + 0.05)) return true;
+  return false;
+}
+
+// ================= game objects =================
+let catDef = 'ginger', levelKey = 'beach';
+let cat = null;
+const catState = { vx: 0, vz: 0, vy: 0, y: 0, onGround: true };
+
+function spawnCat() {
+  if (cat) scene.remove(cat.root);
+  cat = makeCat(CATS[catDef]);
+  cat.root.traverse(m => { if (m.isMesh) m.castShadow = true; });
+  scene.add(cat.root);
+  cat.root.position.set(0, 0, 0);
+  cat.root.rotation.y = 0;
+  Object.assign(catState, { vx: 0, vz: 0, vy: 0, y: 0, onGround: true });
+}
+
 const mice = [];
 for (let i = 0; i < MOUSE_COUNT; i++) {
-  const m = { mesh: makeMouse(), dir: 0, turnTimer: 0 };
+  const m = { mesh: makeMouse(), dir: 0, turnTimer: 0, legT: 0 };
+  m.mesh.traverse(o => { if (o.isMesh) o.castShadow = true; });
   scene.add(m.mesh);
   mice.push(m);
 }
 function placeMouse(m) {
-  // spawn away from the cat
-  let x, z;
+  let x, z, tries = 0;
   do {
-    x = (Math.random() * 2 - 1) * (ARENA - 2);
-    z = (Math.random() * 2 - 1) * (ARENA - 2);
-  } while (Math.hypot(x - cat.position.x, z - cat.position.z) < 6);
+    x = rand(-1, 1) * (ARENA - 2);
+    z = rand(-1, 1) * (ARENA - 2);
+    tries++;
+  } while (tries < 200 && (mouseBlocked(x, z) || Math.hypot(x - cat.root.position.x, z - cat.root.position.z) < 6));
   m.mesh.position.set(x, 0, z);
-  m.dir = Math.random() * Math.PI * 2;
+  m.dir = rand(0, Math.PI * 2);
   m.turnTimer = 0;
 }
 
-// ---------- input ----------
+// ================= input =================
 const keys = {};
 const KEYMAP = { KeyW: 'up', ArrowUp: 'up', KeyS: 'down', ArrowDown: 'down',
                  KeyA: 'left', ArrowLeft: 'left', KeyD: 'right', ArrowRight: 'right' };
@@ -151,43 +614,73 @@ window.addEventListener('keydown', e => {
   if (e.code === 'Space') {
     e.preventDefault();
     if (e.repeat) return;
-    if (state === 'playing') { if (catState.y <= 0) catState.vy = JUMP_SPEED; }
+    if (state === 'playing') { if (catState.onGround) { catState.vy = JUMP_SPEED; catState.onGround = false; } }
     else startGame();
   }
 });
 window.addEventListener('keyup', e => { if (KEYMAP[e.code]) keys[KEYMAP[e.code]] = false; });
 window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
 
-// ---------- game state ----------
-let state = 'start', score = 0, timeLeft = ROUND_TIME;
-const scoreEl = document.getElementById('score');
-const timeEl = document.getElementById('time');
-const overlay = document.getElementById('overlay');
+// ================= menu =================
+const menuEl = document.getElementById('menu'), overEl = document.getElementById('over'), hudEl = document.getElementById('hud');
+function buildChoices(containerId, items, getSwatch, onPick, selected) {
+  const el = document.getElementById(containerId);
+  for (const [key, item] of Object.entries(items)) {
+    const b = document.createElement('button');
+    b.className = 'choice' + (key === selected ? ' selected' : '');
+    b.innerHTML = '<div class="swatch">' + getSwatch(item).map(c => `<span style="background:${c}"></span>`).join('') +
+                  '</div><div>' + item.name + '</div>';
+    b.addEventListener('click', () => {
+      el.querySelectorAll('.choice').forEach(c => c.classList.remove('selected'));
+      b.classList.add('selected');
+      onPick(key);
+      b.blur();
+    });
+    el.appendChild(b);
+  }
+}
+const hex = n => '#' + n.toString(16).padStart(6, '0');
+buildChoices('catChoices', CATS, c => [hex(c.fur), hex(c.accent), hex(c.eye)],
+  k => { catDef = k; spawnCat(); }, catDef);
+buildChoices('levelChoices', LEVELS, l => l.swatch,
+  k => { levelKey = k; loadLevel(k); spawnCat(); mice.forEach(placeMouse); }, levelKey);
+document.getElementById('startBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
+document.getElementById('againBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
+document.getElementById('menuBtn').addEventListener('click', e => { e.target.blur(); showMenu(); });
 
+// ================= game state =================
+let state = 'menu', score = 0, timeLeft = ROUND_TIME;
+const scoreEl = document.getElementById('score'), timeEl = document.getElementById('time');
+
+function showMenu() {
+  state = 'menu';
+  overEl.classList.add('hidden'); hudEl.classList.add('hidden');
+  menuEl.classList.remove('hidden');
+  spawnCat(); mice.forEach(placeMouse);
+}
 function startGame() {
   score = 0; timeLeft = ROUND_TIME;
-  cat.position.set(0, 0, 0); cat.rotation.y = 0;
-  Object.assign(catState, { vx: 0, vz: 0, vy: 0, y: 0 });
+  spawnCat();
   mice.forEach(placeMouse);
   updateHud();
-  overlay.classList.add('hidden');
+  menuEl.classList.add('hidden'); overEl.classList.add('hidden');
+  hudEl.classList.remove('hidden');
   state = 'playing';
 }
 function endGame() {
   state = 'over';
-  document.getElementById('title').textContent = "Time's up!";
-  document.getElementById('msg').textContent = 'You caught ' + score + (score === 1 ? ' mouse.' : ' mice.');
-  overlay.querySelector('p:last-child b').textContent = 'Press Space to play again';
-  overlay.classList.remove('hidden');
+  document.getElementById('overMsg').textContent =
+    CATS[catDef].name + ' caught ' + score + (score === 1 ? ' mouse' : ' mice') + ' on ' + LEVELS[levelKey].name + '.';
+  overEl.classList.remove('hidden');
 }
 function updateHud() {
   scoreEl.textContent = 'Score: ' + score;
   timeEl.textContent = 'Time: ' + Math.ceil(timeLeft);
 }
 
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-
+// ================= update =================
 function updateCat(dt) {
+  // read both axes so two keys at once give a diagonal
   let ix = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
   let iz = (keys.down ? 1 : 0) - (keys.up ? 1 : 0);
   const len = Math.hypot(ix, iz);
@@ -196,57 +689,62 @@ function updateCat(dt) {
     catState.vx += ix * CAT_ACCEL * dt;
     catState.vz += iz * CAT_ACCEL * dt;
   }
-  // smooth slow-down
   const damp = Math.exp(-CAT_FRICTION * dt * (len > 0 ? 0.35 : 1));
   catState.vx *= damp; catState.vz *= damp;
-  const sp = Math.hypot(catState.vx, catState.vz);
-  if (sp > CAT_MAX_SPEED) { catState.vx *= CAT_MAX_SPEED / sp; catState.vz *= CAT_MAX_SPEED / sp; }
+  let sp = Math.hypot(catState.vx, catState.vz);
+  if (sp > CAT_MAX_SPEED) { catState.vx *= CAT_MAX_SPEED / sp; catState.vz *= CAT_MAX_SPEED / sp; sp = CAT_MAX_SPEED; }
 
-  const lim = ARENA - 1;
-  cat.position.x = clamp(cat.position.x + catState.vx * dt, -lim, lim);
-  cat.position.z = clamp(cat.position.z + catState.vz * dt, -lim, lim);
+  const p = cat.root.position, lim = ARENA - CAT_RADIUS;
+  // move one axis at a time so the cat slides along obstacle sides
+  const nx = clamp(p.x + catState.vx * dt, -lim, lim);
+  if (!catBlocked(nx, p.z, catState.y)) p.x = nx; else catState.vx = 0;
+  const nz = clamp(p.z + catState.vz * dt, -lim, lim);
+  if (!catBlocked(p.x, nz, catState.y)) p.z = nz; else catState.vz = 0;
 
-  // jump
+  // vertical: jump, fall, land on obstacle tops
   catState.vy -= GRAVITY * dt;
   catState.y += catState.vy * dt;
-  if (catState.y <= 0) { catState.y = 0; catState.vy = 0; }
-  cat.position.y = catState.y;
+  const g = groundHeight(p.x, p.z, Math.max(catState.y, catState.y - catState.vy * dt));
+  if (catState.y <= g) { catState.y = g; catState.vy = 0; catState.onGround = true; }
+  else catState.onGround = catState.y - g < 0.01;
+  p.y = catState.y;
 
-  // face direction of travel, turning smoothly
   if (sp > 0.5) {
     const target = Math.atan2(catState.vx, catState.vz);
-    let diff = target - cat.rotation.y;
-    diff = Math.atan2(Math.sin(diff), Math.cos(diff));
-    cat.rotation.y += diff * Math.min(1, 12 * dt);
+    const diff = Math.atan2(Math.sin(target - cat.root.rotation.y), Math.cos(target - cat.root.rotation.y));
+    cat.root.rotation.y += diff * Math.min(1, 12 * dt);
   }
+  animateCat(cat, dt, sp, !catState.onGround);
 }
 
-function updateMice(dt) {
+function updateMice(dt, catching) {
   const lim = ARENA - 1;
   for (const m of mice) {
     const p = m.mesh.position;
-    const dx = p.x - cat.position.x, dz = p.z - cat.position.z;
+    const dx = p.x - cat.root.position.x, dz = p.z - cat.root.position.z;
     const d = Math.hypot(dx, dz);
     let speed;
-    if (d < 5) {             // flee from the cat
+    if (catching && d < 5) {             // flee from the cat
       const away = Math.atan2(dx, dz);
-      let diff = Math.atan2(Math.sin(away - m.dir), Math.cos(away - m.dir));
-      m.dir += diff * Math.min(1, 6 * dt);
+      m.dir += Math.atan2(Math.sin(away - m.dir), Math.cos(away - m.dir)) * Math.min(1, 6 * dt);
       speed = 6;
-    } else {                 // wander
+    } else {                             // wander
       m.turnTimer -= dt;
-      if (m.turnTimer <= 0) { m.dir += (Math.random() - 0.5) * 2.5; m.turnTimer = 0.6 + Math.random() * 1.2; }
+      if (m.turnTimer <= 0) { m.dir += rand(-1.25, 1.25); m.turnTimer = rand(0.6, 1.8); }
       speed = 2.5;
     }
-    p.x += Math.sin(m.dir) * speed * dt;
-    p.z += Math.cos(m.dir) * speed * dt;
-    // bounce off walls
+    const nx = p.x + Math.sin(m.dir) * speed * dt, nz = p.z + Math.cos(m.dir) * speed * dt;
+    if (mouseBlocked(nx, nz)) {
+      m.dir += Math.PI * rand(0.5, 1.0) * (Math.random() < 0.5 ? -1 : 1);   // scurry around it
+    } else { p.x = nx; p.z = nz; }
     if (p.x < -lim || p.x > lim) { p.x = clamp(p.x, -lim, lim); m.dir = -m.dir; }
     if (p.z < -lim || p.z > lim) { p.z = clamp(p.z, -lim, lim); m.dir = Math.PI - m.dir; }
     m.mesh.rotation.y = m.dir;
+    m.legT += dt * speed * 4;
+    m.mesh.children[0].position.y = 0.3 + Math.abs(Math.sin(m.legT)) * 0.05;
 
     // caught when the cat touches it
-    if (d < CATCH_DIST) {
+    if (catching && d < CATCH_DIST) {
       score++;
       updateHud();
       placeMouse(m);
@@ -254,21 +752,32 @@ function updateMice(dt) {
   }
 }
 
-// ---------- loop ----------
-let last = performance.now();
+// ================= loop =================
+let last = performance.now(), clock = 0;
 function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
-  last = now;
+  last = now; clock += dt;
+  for (const f of animated) f(clock);
   if (state === 'playing') {
     updateCat(dt);
-    updateMice(dt);
+    updateMice(dt, true);
     timeLeft -= dt;
     if (timeLeft <= 0) { timeLeft = 0; updateHud(); endGame(); }
     else updateHud();
+  } else if (state === 'menu') {
+    // idle preview: cat turns slowly so you can see it, mice wander
+    cat.root.rotation.y += dt * 0.6;
+    animateCat(cat, dt, 0, false);
+    updateMice(dt, false);
+  } else {
+    animateCat(cat, dt, 0, false);
   }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
+
+loadLevel(levelKey);
+spawnCat();
 mice.forEach(placeMouse);
 requestAnimationFrame(frame);
 </script>
