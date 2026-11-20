@@ -18,7 +18,10 @@
   .choice:hover { background: #38425a; }
   .choice.selected { border-color: #ffd27a; background: #404b66; }
   .choice img { width: 156px; height: 104px; border-radius: 8px; display: block; background: #222; }
-  @media (max-width: 560px) { .choice img { width: 96px; height: 64px; } .choice { font-size: 14px; } }
+  .compact .choice { padding: 6px; font-size: 14px; }
+  .compact .choice img { width: 112px; height: 75px; }
+  .compact h2 { margin: 12px 0 8px; font-size: 15px; }
+  @media (max-width: 560px) { .choice img, .compact .choice img { width: 96px; height: 64px; } .choice { font-size: 14px; } }
   .btn { margin-top: 20px; background: #ffb340; color: #222; border: 0; border-radius: 10px; padding: 12px 30px; font-size: 20px; font-weight: 700; cursor: pointer; }
   .btn.secondary { background: #2c3444; color: #fff; margin-left: 8px; }
   .btn:hover { filter: brightness(1.1); }
@@ -47,6 +50,12 @@
   <div class="panel">
     <h1>Time's up!</h1>
     <p id="overMsg"></p>
+    <div class="compact">
+      <h2>Change cat</h2>
+      <div class="choices" id="overCatChoices"></div>
+      <h2>Change level</h2>
+      <div class="choices" id="overLevelChoices"></div>
+    </div>
     <button class="btn" id="againBtn">Play again</button><button class="btn secondary" id="menuBtn">Main menu</button>
     <p class="hint">Press Space to play again</p>
   </div>
@@ -55,7 +64,8 @@
 <div id="paused" class="screen hidden">
   <div class="panel">
     <h1>Paused</h1>
-    <p>Press Space to resume</p>
+    <button class="btn" id="resumeBtn">Resume</button><button class="btn secondary" id="quitBtn">Quit to main menu</button>
+    <p class="hint">Press Space to resume</p>
   </div>
 </div>
 
@@ -680,28 +690,34 @@ const previews = {};
   }
 })();
 
-function buildChoices(containerId, items, onPick, selected) {
-  const el = document.getElementById(containerId);
-  for (const [key, item] of Object.entries(items)) {
-    const b = document.createElement('button');
-    b.className = 'choice' + (key === selected ? ' selected' : '');
-    b.innerHTML = `<img src="${previews[key]}" alt="${item.name}"><div>${item.name}</div>`;
-    b.addEventListener('click', () => {
-      el.querySelectorAll('.choice').forEach(c => c.classList.remove('selected'));
-      b.classList.add('selected');
-      onPick(key);
-      b.blur();
-    });
-    el.appendChild(b);
+// The same pickers appear on the main menu and the game-over screen;
+// `group` keeps the highlighted choice in sync between them.
+function buildChoices(containerIds, group, items, onPick, selected) {
+  for (const id of containerIds) {
+    const el = document.getElementById(id);
+    for (const [key, item] of Object.entries(items)) {
+      const b = document.createElement('button');
+      b.className = 'choice ' + group + (key === selected ? ' selected' : '');
+      b.dataset.key = key;
+      b.innerHTML = `<img src="${previews[key]}" alt="${item.name}"><div>${item.name}</div>`;
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.choice.' + group).forEach(c => c.classList.toggle('selected', c.dataset.key === key));
+        onPick(key);
+        b.blur();
+      });
+      el.appendChild(b);
+    }
   }
 }
-buildChoices('catChoices', CATS,
+buildChoices(['catChoices', 'overCatChoices'], 'pick-cat', CATS,
   k => { catDef = k; spawnCat(); }, catDef);
-buildChoices('levelChoices', LEVELS,
+buildChoices(['levelChoices', 'overLevelChoices'], 'pick-level', LEVELS,
   k => { levelKey = k; loadLevel(k); spawnCat(); mice.forEach(placeMouse); }, levelKey);
 document.getElementById('startBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
 document.getElementById('againBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
 document.getElementById('menuBtn').addEventListener('click', e => { e.target.blur(); showMenu(); });
+document.getElementById('resumeBtn').addEventListener('click', e => { e.target.blur(); resumeGame(); });
+document.getElementById('quitBtn').addEventListener('click', e => { e.target.blur(); showMenu(); });
 
 // ================= game state =================
 let state = 'menu', score = 0, timeLeft = ROUND_TIME;
@@ -709,7 +725,7 @@ const scoreEl = document.getElementById('score'), timeEl = document.getElementBy
 
 function showMenu() {
   state = 'menu';
-  overEl.classList.add('hidden'); hudEl.classList.add('hidden');
+  overEl.classList.add('hidden'); hudEl.classList.add('hidden'); pausedEl.classList.add('hidden');
   menuEl.classList.remove('hidden');
   spawnCat(); mice.forEach(placeMouse);
 }

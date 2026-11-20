@@ -14,7 +14,7 @@ You can also download `index.html` and double-click it. You need an internet con
 | --- | --- |
 | Move | WASD or arrow keys (press two at once to move diagonally) |
 | Jump | Space |
-| Pause / resume | Escape to pause, Space to resume |
+| Pause / resume | Escape to pause, Space to resume (the pause screen also has Quit to main menu) |
 | Start / play again | Space or the on-screen buttons |
 
 - You catch a mouse by touching it, and each catch is worth 1 point.
@@ -23,7 +23,7 @@ You can also download `index.html` and double-click it. You need an internet con
 
 ## Cats and levels
 
-Pick your cat and level from the main menu:
+Pick your cat and level from the main menu. You can also change them on the end-of-round screen before playing again:
 
 - **Cats:** Ginger, Shadow, Siamese
 - **Levels:** Beach, Garden, City Streets
