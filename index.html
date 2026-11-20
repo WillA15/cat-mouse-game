@@ -13,11 +13,12 @@
   .panel h2 { font-size: 18px; margin: 18px 0 10px; color: #ffd27a; text-transform: uppercase; letter-spacing: .08em; }
   .panel p { font-size: 17px; margin: 8px 0; }
   .choices { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
-  .choice { background: #2c3444; color: #fff; border: 3px solid transparent; border-radius: 12px; padding: 10px 14px; font-size: 16px; cursor: pointer; min-width: 120px; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .panel { max-height: 100%; overflow-y: auto; box-sizing: border-box; }
+  .choice { background: #2c3444; color: #fff; border: 3px solid transparent; border-radius: 12px; padding: 8px; font-size: 16px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 6px; }
   .choice:hover { background: #38425a; }
   .choice.selected { border-color: #ffd27a; background: #404b66; }
-  .swatch { display: flex; gap: 4px; }
-  .swatch span { width: 18px; height: 18px; border-radius: 50%; border: 1px solid rgba(255,255,255,.4); }
+  .choice img { width: 156px; height: 104px; border-radius: 8px; display: block; background: #222; }
+  @media (max-width: 560px) { .choice img { width: 96px; height: 64px; } .choice { font-size: 14px; } }
   .btn { margin-top: 20px; background: #ffb340; color: #222; border: 0; border-radius: 10px; padding: 12px 30px; font-size: 20px; font-weight: 700; cursor: pointer; }
   .btn.secondary { background: #2c3444; color: #fff; margin-left: 8px; }
   .btn:hover { filter: brightness(1.1); }
@@ -623,13 +624,59 @@ window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; }
 
 // ================= menu =================
 const menuEl = document.getElementById('menu'), overEl = document.getElementById('over'), hudEl = document.getElementById('hud');
-function buildChoices(containerId, items, getSwatch, onPick, selected) {
+// ---- preview pictures for the menu: render each choice once into an image ----
+function snapshot(sceneToRender, cam, w = 312, h = 208) {
+  const rt = new THREE.WebGLRenderTarget(w, h);
+  renderer.setRenderTarget(rt);
+  renderer.render(sceneToRender, cam);
+  const buf = new Uint8Array(w * h * 4);
+  renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+  renderer.setRenderTarget(null);
+  rt.dispose();
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d'), img = ctx.createImageData(w, h);
+  for (let y = 0; y < h; y++) img.data.set(buf.subarray((h - 1 - y) * w * 4, (h - y) * w * 4), y * w * 4);  // flip
+  ctx.putImageData(img, 0, 0);
+  return c.toDataURL();
+}
+const previews = {};
+(function makePreviews() {
+  // levels: an angled view of each arena and its backdrop
+  const lcam = new THREE.PerspectiveCamera(55, 1.5, 0.1, 400);
+  lcam.position.set(0, 20, 27); lcam.lookAt(0, 0, -4);
+  mice.forEach(m => m.mesh.visible = false);
+  for (const k of Object.keys(LEVELS)) {
+    loadLevel(k);
+    animated.forEach(f => f(0));
+    previews[k] = snapshot(scene, lcam);
+  }
+  mice.forEach(m => m.mesh.visible = true);
+  // cats: a close-up portrait of each cat
+  const catScene = new THREE.Scene();
+  catScene.background = new THREE.Color(0x3a4560);
+  catScene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 0.75));
+  const light = new THREE.DirectionalLight(0xffffff, 0.75);
+  light.position.set(3, 6, 5); catScene.add(light);
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(2.2, 32), mat(0x55607a));
+  ground.rotation.x = -Math.PI / 2; catScene.add(ground);
+  const ccam = new THREE.PerspectiveCamera(35, 1.5, 0.1, 50);
+  ccam.position.set(3.0, 2.3, 3.6); ccam.lookAt(0, 0.95, 0.1);
+  for (const k of Object.keys(CATS)) {
+    const c = makeCat(CATS[k]);
+    c.tail.rotation.x = -0.7; c.tail.rotation.z = 0.3;
+    catScene.add(c.root);
+    previews[k] = snapshot(catScene, ccam);
+    catScene.remove(c.root);
+  }
+})();
+
+function buildChoices(containerId, items, onPick, selected) {
   const el = document.getElementById(containerId);
   for (const [key, item] of Object.entries(items)) {
     const b = document.createElement('button');
     b.className = 'choice' + (key === selected ? ' selected' : '');
-    b.innerHTML = '<div class="swatch">' + getSwatch(item).map(c => `<span style="background:${c}"></span>`).join('') +
-                  '</div><div>' + item.name + '</div>';
+    b.innerHTML = `<img src="${previews[key]}" alt="${item.name}"><div>${item.name}</div>`;
     b.addEventListener('click', () => {
       el.querySelectorAll('.choice').forEach(c => c.classList.remove('selected'));
       b.classList.add('selected');
@@ -639,10 +686,9 @@ function buildChoices(containerId, items, getSwatch, onPick, selected) {
     el.appendChild(b);
   }
 }
-const hex = n => '#' + n.toString(16).padStart(6, '0');
-buildChoices('catChoices', CATS, c => [hex(c.fur), hex(c.accent), hex(c.eye)],
+buildChoices('catChoices', CATS,
   k => { catDef = k; spawnCat(); }, catDef);
-buildChoices('levelChoices', LEVELS, l => l.swatch,
+buildChoices('levelChoices', LEVELS,
   k => { levelKey = k; loadLevel(k); spawnCat(); mice.forEach(placeMouse); }, levelKey);
 document.getElementById('startBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
 document.getElementById('againBtn').addEventListener('click', e => { e.target.blur(); startGame(); });
