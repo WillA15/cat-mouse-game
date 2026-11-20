@@ -14,6 +14,7 @@ You can also download `index.html` and double-click it. You need an internet con
 | --- | --- |
 | Move | WASD or arrow keys (press two at once to move diagonally) |
 | Jump | Space |
+| Pause / resume | Escape to pause, Space to resume |
 | Start / play again | Space or the on-screen buttons |
 
 - You catch a mouse by touching it, and each catch is worth 1 point.
